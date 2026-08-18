@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stack vs Heap — JVM memory inspector</title>
+<meta name="description" content="An interactive playground that steps through Java snippets and shows how the JVM uses stack and heap memory, with live reference arrows and garbage collection." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --stack: #f5b642;
+    --heap: #37cfe6;
+    --ref: #f472b6;
+    --danger: #fb6f7c;
+
+    --text: #e7ecf7;
+    --muted: #8791a6;
+    --faint: #5b6379;
+
+    --panel: rgba(255, 255, 255, 0.022);
+    --panel-2: rgba(255, 255, 255, 0.035);
+    --border: rgba(255, 255, 255, 0.09);
+    --border-soft: rgba(255, 255, 255, 0.055);
+
+    --stack-tint: rgba(245, 182, 66, 0.10);
+    --stack-border: rgba(245, 182, 66, 0.34);
+    --heap-tint: rgba(55, 207, 230, 0.09);
+    --heap-border: rgba(55, 207, 230, 0.32);
+    --ref-tint: rgba(244, 114, 182, 0.14);
+    --danger-tint: rgba(251, 111, 124, 0.12);
+
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "Inter", system-ui, -apple-system, sans-serif;
+    --display: "Space Grotesk", var(--sans);
+
+    --radius: 14px;
+    --radius-sm: 9px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--sans);
+    color: var(--text);
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(900px 520px at 12% -8%, rgba(245, 182, 66, 0.11), transparent 60%),
+      radial-gradient(1000px 620px at 96% 4%, rgba(55, 207, 230, 0.10), transparent 62%),
+      radial-gradient(760px 620px at 60% 118%, rgba(244, 114, 182, 0.07), transparent 60%);
+    background-attachment: fixed;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 26px 20px 60px; }
+
+  /* ---------- Header ---------- */
+  header.site { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; flex-wrap: wrap; margin-bottom: 22px; }
+  .brand .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--heap); opacity: 0.85; margin: 0 0 6px;
+  }
+  .brand h1 {
+    font-family: var(--display);
+    font-weight: 700; font-size: clamp(30px, 5vw, 46px);
+    margin: 0; letter-spacing: -0.015em; line-height: 1.02;
+  }
+  .brand h1 .amp { color: var(--faint); font-weight: 500; }
+  .brand h1 .s { color: var(--stack); }
+  .brand h1 .h { color: var(--heap); }
+
+  .legend { display: flex; gap: 8px; flex-wrap: wrap; }
+  .legend .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.02em;
+    padding: 6px 11px; border: 1px solid var(--border-soft); border-radius: 999px;
+    background: var(--panel); color: var(--muted);
+  }
+  .legend .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .legend .dot.stack { background: var(--stack); }
+  .legend .dot.heap { background: var(--heap); }
+  .legend .dot.ref { width: 14px; height: 2px; border-radius: 2px; background: var(--ref); }
+
+  /* ---------- Example tabs ---------- */
+  .examples { display: flex; gap: 8px; overflow-x: auto; padding: 4px 2px 10px; margin-bottom: 16px; scrollbar-width: thin; }
+  .examples::-webkit-scrollbar { height: 6px; }
+  .examples::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; }
+  .ex-tab {
+    flex: 0 0 auto; cursor: pointer; user-select: none;
+    display: inline-flex; align-items: center; gap: 9px;
+    padding: 9px 14px; border-radius: 999px;
+    border: 1px solid var(--border-soft); background: var(--panel);
+    color: var(--muted); font-family: var(--sans); font-size: 13px; font-weight: 500;
+    transition: border-color .18s, color .18s, background .18s;
+  }
+  .ex-tab:hover { color: var(--text); border-color: var(--border); }
+  .ex-tab .n {
+    font-family: var(--mono); font-size: 11px; font-weight: 700;
+    width: 20px; height: 20px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--panel-2); color: var(--faint);
+  }
+  .ex-tab[aria-selected="true"] {
+    color: var(--text); border-color: var(--stack-border);
+    background: linear-gradient(180deg, var(--stack-tint), transparent);
+  }
+  .ex-tab[aria-selected="true"] .n { background: var(--stack); color: #201603; }
+
+  /* ---------- Layout ---------- */
+  .grid { display: grid; grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.08fr); gap: 18px; align-items: start; }
+  @media (max-width: 940px) { .grid { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); overflow: hidden;
+  }
+  .card-head {
+    padding: 15px 18px 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .card-head .kicker {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--faint); margin: 0 0 7px;
+  }
+  .card-head h2 { font-family: var(--display); font-weight: 600; font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+  .card-head p.desc { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+
+  /* ---------- Source panel ---------- */
+  .code {
+    font-family: var(--mono); font-size: 13.5px; line-height: 1.62;
+    padding: 12px 6px 14px; overflow-x: auto;
+  }
+  .code-line { display: flex; padding: 1px 12px 1px 0; border-radius: 6px; white-space: pre; transition: background .2s; }
+  .code-line .ln {
+    flex: 0 0 auto; width: 34px; text-align: right; padding-right: 14px;
+    color: var(--faint); user-select: none;
+  }
+  .code-line .src { flex: 1 1 auto; }
+  .code-line.active { background: linear-gradient(90deg, var(--stack-tint), rgba(245,182,66,0.02)); }
+  .code-line.active .ln { color: var(--stack); }
+  .code-line.active .src { position: relative; }
+  .code-line.active::before {
+    content: ""; position: absolute; left: 0; width: 3px; height: 1.62em;
+    margin-top: 0; background: var(--stack); border-radius: 0 3px 3px 0;
+  }
+
+  .c-kw { color: #c792ea; }
+  .c-type { color: var(--heap); }
+  .c-num { color: var(--stack); }
+  .c-str { color: #a8e6a0; }
+  .c-com { color: var(--faint); font-style: italic; }
+  .c-fn { color: #f9c96b; }
+
+  .note {
+    margin: 0; padding: 14px 18px;
+    border-top: 1px solid var(--border-soft);
+    background: var(--panel-2);
+    display: flex; gap: 12px; align-items: flex-start;
+  }
+  .note .badge {
+    flex: 0 0 auto; margin-top: 1px;
+    font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--heap); border: 1px solid var(--heap-border); border-radius: 6px;
+    padding: 3px 7px; background: var(--heap-tint);
+  }
+  .note p { margin: 0; font-size: 13.5px; color: var(--text); }
+  .note code { font-family: var(--mono); font-size: 0.92em; color: var(--stack); background: rgba(245,182,66,0.09); padding: 1px 5px; border-radius: 5px; }
+
+  /* ---------- Controls ---------- */
+  .controls {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding: 13px 16px; border-top: 1px solid var(--border-soft);
+  }
+  button.ctrl {
+    font-family: var(--sans); font-size: 13px; font-weight: 500; cursor: pointer;
+    color: var(--text); background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 9px 14px;
+    display: inline-flex; align-items: center; gap: 7px;
+    transition: border-color .16s, background .16s, opacity .16s, transform .05s;
+  }
+  button.ctrl:hover:not(:disabled) { border-color: var(--border); background: rgba(255,255,255,0.06); }
+  button.ctrl:active:not(:disabled) { transform: translateY(1px); }
+  button.ctrl:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.ctrl.primary {
+    color: #201603; font-weight: 600;
+    background: var(--stack); border-color: var(--stack);
+  }
+  button.ctrl.primary:hover:not(:disabled) { background: #ffca5e; }
+  button.ctrl:focus-visible, .ex-tab:focus-visible { outline: 2px solid var(--heap); outline-offset: 2px; }
+  .counter { margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--muted); }
+  .counter b { color: var(--text); font-weight: 700; }
+
+  /* ---------- Memory panel ---------- */
+  .mem-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .tally {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    border: 1px solid var(--border-soft); border-radius: 999px; padding: 5px 11px;
+    background: var(--panel-2); white-space: nowrap;
+  }
+  .tally .ok { color: var(--heap); }
+  .tally .bad { color: var(--danger); }
+
+  .mem-body { position: relative; padding: 16px; display: grid; grid-template-columns: minmax(0,0.86fr) minmax(0,1.14fr); gap: 14px; min-height: 260px; }
+  @media (max-width: 560px) { .mem-body { grid-template-columns: 1fr; } }
+
+  .region { position: relative; z-index: 1; }
+  .region > .region-label {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase;
+    margin: 0 0 11px; display: flex; align-items: center; gap: 8px;
+  }
+  .region > .region-label .swatch { width: 9px; height: 9px; border-radius: 2px; }
+  .region.stack .region-label { color: var(--stack); }
+  .region.stack .region-label .swatch { background: var(--stack); }
+  .region.heap .region-label { color: var(--heap); }
+  .region.heap .region-label .swatch { background: var(--heap); }
+
+  .region-empty {
+    font-family: var(--mono); font-size: 12px; color: var(--faint);
+    border: 1px dashed var(--border); border-radius: var(--radius-sm);
+    padding: 18px; text-align: center;
+  }
+
+  /* Stack frames */
+  .stack-col { display: flex; flex-direction: column-reverse; gap: 9px; }
+  .frame {
+    border: 1px solid var(--stack-border); border-radius: var(--radius-sm);
+    background: linear-gradient(180deg, var(--stack-tint), rgba(245,182,66,0.02));
+    overflow: hidden; transition: opacity .25s;
+  }
+  .frame.dim { opacity: 0.42; }
+  .frame-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+  }
+  .frame-head .fname { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--stack); }
+  .frame-head .frole { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); }
+  .slots { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .slot {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px;
+    padding: 6px 9px; border-radius: 7px;
+    background: rgba(255,255,255,0.025); border: 1px solid var(--border-soft);
+  }
+  .slot .stype { color: var(--heap); font-size: 11.5px; }
+  .slot .sname { color: var(--text); }
+  .slot .eq { color: var(--faint); }
+  .slot .sval { color: var(--stack); font-weight: 500; margin-left: auto; }
+  .slot .snull { color: var(--faint); margin-left: auto; }
+  .slot.ref .arrow-out { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--ref); }
+  .anchor { width: 9px; height: 9px; border-radius: 50%; background: var(--ref); box-shadow: 0 0 0 3px var(--ref-tint); }
+  .slot.changed, .field.changed { animation: flash 1.1s ease; }
+  @keyframes flash {
+    0% { background: var(--ref-tint); border-color: var(--ref); }
+    100% { }
+  }
+
+  /* Heap objects */
+  .heap-col { display: flex; flex-direction: column; gap: 12px; }
+  .obj {
+    position: relative; border: 1px solid var(--heap-border); border-radius: var(--radius-sm);
+    background: linear-gradient(180deg, var(--heap-tint), rgba(55,207,230,0.015));
+    overflow: visible;
+  }
+  .obj.garbage { border-style: dashed; border-color: var(--danger); background: linear-gradient(180deg, var(--danger-tint), transparent); }
+  .obj .tgt {
+    position: absolute; left: -6px; top: 20px;
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--heap); box-shadow: 0 0 0 3px var(--heap-tint);
+  }
+  .obj.garbage .tgt { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-tint); }
+  .obj-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 8px 12px; border-bottom: 1px solid var(--border-soft);
+  }
+  .obj-head .otype { font-family: var(--mono); font-weight: 700; font-size: 13px; color: var(--heap); }
+  .obj-head .oaddr { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .badge-gc {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--danger); border: 1px solid var(--danger); border-radius: 5px; padding: 2px 6px;
+    background: var(--danger-tint);
+  }
+  .fields { padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .field {
+    display: flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px;
+    padding: 6px 9px; border-radius: 7px;
+    background: rgba(255,255,255,0.025); border: 1px solid var(--border-soft);
+  }
+  .field .fkey { color: var(--muted); }
+  .field .fval { color: var(--text); margin-left: auto; }
+  .field .fnull { color: var(--faint); margin-left: auto; }
+  .field.reff .arrow-out { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--ref); }
+
+  /* GC banner */
+  .gc-banner {
+    grid-column: 1 / -1; z-index: 3;
+    display: flex; align-items: center; gap: 10px;
+    font-family: var(--mono); font-size: 13px; color: var(--danger);
+    border: 1px solid var(--danger); border-radius: var(--radius-sm);
+    background: var(--danger-tint); padding: 10px 14px;
+    animation: gcin .4s ease;
+  }
+  @keyframes gcin { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+
+  /* Arrow overlay */
+  svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; overflow: visible; }
+  svg.arrows path.arrow { fill: none; stroke: var(--ref); stroke-width: 2; stroke-linecap: round; filter: drop-shadow(0 0 4px rgba(244,114,182,0.35)); }
+
+  .hint { margin-top: 16px; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--faint); letter-spacing: 0.02em; }
+  kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+    padding: 1px 5px; background: var(--panel-2);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <div class="brand">
+      <p class="eyebrow">JVM memory inspector</p>
+      <h1><span class="s">Stack</span> <span class="amp">vs</span> <span class="h">Heap</span></h1>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span class="chip"><span class="dot stack"></span> Stack</span>
+      <span class="chip"><span class="dot heap"></span> Heap</span>
+      <span class="chip"><span class="dot ref"></span> Reference</span>
+    </div>
+  </header>
+
+  <nav class="examples" id="examples" aria-label="Choose an example"></nav>
+
+  <div class="grid">
+    <!-- SOURCE -->
+    <section class="card" aria-label="Source code">
+      <div class="card-head">
+        <p class="kicker">Source</p>
+        <h2 id="ex-title">—</h2>
+        <p class="desc" id="ex-desc">—</p>
+      </div>
+      <div class="code" id="code" role="group" aria-label="Java source, current line highlighted"></div>
+      <div class="note">
+        <span class="badge" id="note-badge">step</span>
+        <p id="note-text">—</p>
+      </div>
+      <div class="controls">
+        <button class="ctrl" id="btn-reset" title="Reset to first step">↺ Reset</button>
+        <button class="ctrl" id="btn-back" title="Previous step (←)">← Back</button>
+        <button class="ctrl primary" id="btn-step" title="Next step (→)">Step →</button>
+        <button class="ctrl" id="btn-play" title="Auto-advance">▶ Play</button>
+        <span class="counter" id="counter">step <b>1</b> / 1</span>
+      </div>
+    </section>
+
+    <!-- MEMORY -->
+    <section class="card" aria-label="Memory">
+      <div class="card-head mem-head">
+        <div>
+          <p class="kicker">Memory</p>
+          <h2>Live inspector</h2>
+        </div>
+        <span class="tally" id="tally">—</span>
+      </div>
+      <div class="mem-body" id="mem-body">
+        <svg class="arrows" id="arrows" aria-hidden="true">
+          <defs>
+            <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="7.5" refY="4.5" orient="auto">
+              <path d="M0,0 L9,4.5 L0,9 L2.6,4.5 Z" fill="var(--ref)"></path>
+            </marker>
+          </defs>
+        </svg>
+        <div class="region stack" id="stack-region">
+          <p class="region-label"><span class="swatch"></span> Stack · call frames</p>
+          <div class="stack-col" id="stack-col"></div>
+        </div>
+        <div class="region heap" id="heap-region">
+          <p class="region-label"><span class="swatch"></span> Heap · objects</p>
+          <div class="heap-col" id="heap-col"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <p class="hint">Navigate with <kbd>←</kbd> <kbd>→</kbd> · pink arrows are references · dashed red = unreachable, awaiting GC</p>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Small builders for the data model
+   ============================================================ */
+const prim = (type, name, value) => ({ name, type, value });        // stack primitive slot
+const sref = (type, name, target) => ({ name, type, ref: target }); // stack reference slot (target id or null)
+const frame = (name, slots) => ({ name, slots });
+const vfield = (name, value) => ({ name, value });                  // heap value field
+const rfield = (name, target) => ({ name, ref: target });          // heap reference field (target id or null)
+const obj = (id, type, fields) => ({ id, type, fields });
+
+/* ============================================================
+   EXAMPLES  (ordered)
+   Each step is a full snapshot: { line, note, stack[], heap[], gc? }
+   Reachability & garbage are DERIVED, never hardcoded.
+   ============================================================ */
+const EXAMPLES = [
+  /* 1 ---------------------------------------------------------- */
+  {
+    id: "primitives",
+    tab: "Primitives",
+    title: "Primitives live on the stack",
+    desc: "Primitive values sit directly in stack slots and are copied by value.",
+    code: [
+      "int a = 5;",
+      "int b = a;",
+      "b = b + 10;",
+      "int c = a + b;"
+    ],
+    steps: [
+      { line: 1, note: "A new <code>int a</code> is created directly in <code>main</code>'s stack frame with the value 5. Primitives store their actual value here — nothing goes on the heap.",
+        stack: [frame("main", [prim("int", "a", 5)])], heap: [] },
+      { line: 2, note: "<code>b = a</code> copies the <em>value</em> of <code>a</code>. <code>b</code> is its own independent box that happens to hold the same 5.",
+        stack: [frame("main", [prim("int", "a", 5), prim("int", "b", 5)])], heap: [] },
+      { line: 3, note: "<code>b</code> becomes 15. Notice <code>a</code> is untouched — changing a copy never reaches back to the original.",
+        stack: [frame("main", [prim("int", "a", 5), prim("int", "b", 15)])], heap: [] },
+      { line: 4, note: "<code>c = 5 + 15 = 20</code>. Three independent primitive boxes, and the heap stayed empty the whole time.",
+        stack: [frame("main", [prim("int", "a", 5), prim("int", "b", 15), prim("int", "c", 20)])], heap: [] }
+    ]
+  },
+
+  /* 2 ---------------------------------------------------------- */
+  {
+    id: "objects",
+    tab: "Objects",
+    title: "Objects live on the heap",
+    desc: "new allocates on the heap; the stack holds only a reference to it.",
+    code: [
+      "Point p = new Point(1, 2);",
+      "Point q = new Point(3, 4);",
+      "int px = p.x;"
+    ],
+    steps: [
+      { line: 1, note: "<code>new Point(...)</code> allocates a Point on the heap at <code>@o1</code>. The stack slot <code>p</code> holds only a <em>reference</em> — the pink arrow.",
+        stack: [frame("main", [sref("Point", "p", "o1")])],
+        heap: [obj("o1", "Point", [vfield("x", 1), vfield("y", 2)])] },
+      { line: 2, note: "A second Point is allocated at <code>@o2</code>. Every <code>new</code> creates a distinct heap object with its own address.",
+        stack: [frame("main", [sref("Point", "p", "o1"), sref("Point", "q", "o2")])],
+        heap: [obj("o1", "Point", [vfield("x", 1), vfield("y", 2)]), obj("o2", "Point", [vfield("x", 3), vfield("y", 4)])] },
+      { line: 3, note: "<code>p.x</code> reads the field value 1 and copies it into a primitive <code>px</code> on the stack. The object itself doesn't move.",
+        stack: [frame("main", [sref("Point", "p", "o1"), sref("Point", "q", "o2"), prim("int", "px", 1)])],
+        heap: [obj("o1", "Point", [vfield("x", 1), vfield("y", 2)]), obj("o2", "Point", [vfield("x", 3), vfield("y", 4)])] }
+    ]
+  },
+
+  /* 3 ---------------------------------------------------------- */
+  {
+    id: "aliasing",
+    tab: "Aliasing",
+    title: "Aliasing — two names, one object",
+    desc: "Assigning a reference copies the arrow, not the object it points to.",
+    code: [
+      "Point p = new Point(1, 1);",
+      "Point q = p;",
+      "q.x = 99;",
+      "int sum = p.x + q.x;"
+    ],
+    steps: [
+      { line: 1, note: "One Point at <code>@o1</code>, referenced by <code>p</code>.",
+        stack: [frame("main", [sref("Point", "p", "o1")])],
+        heap: [obj("o1", "Point", [vfield("x", 1), vfield("y", 1)])] },
+      { line: 2, note: "<code>q = p</code> copies the <em>reference</em>, not the object. Now two arrows point at the same <code>@o1</code> — <code>p</code> and <code>q</code> are aliases.",
+        stack: [frame("main", [sref("Point", "p", "o1"), sref("Point", "q", "o1")])],
+        heap: [obj("o1", "Point", [vfield("x", 1), vfield("y", 1)])] },
+      { line: 3, note: "Mutating through <code>q</code> changes the shared object. Read <code>p.x</code> now and it's 99 too — same object, two names.",
+        stack: [frame("main", [sref("Point", "p", "o1"), sref("Point", "q", "o1")])],
+        heap: [obj("o1", "Point", [vfield("x", 99), vfield("y", 1)])] },
+      { line: 4, note: "<code>99 + 99 = 198</code>. Both reads land on the exact same field.",
+        stack: [frame("main", [sref("Point", "p", "o1"), sref("Point", "q", "o1"), prim("int", "sum", 198)])],
+        heap: [obj("o1", "Point", [vfield("x", 99), vfield("y", 1)])] }
+    ]
+  },
+
+  /* 4 ---------------------------------------------------------- */
+  {
+    id: "pbv-primitive",
+    tab: "Pass by value ①",
+    title: "Pass by value — primitives",
+    desc: "A primitive argument is copied into the method, so the caller is unaffected.",
+    code: [
+      "int number = 10;",
+      "modifyPrimitive(number);",
+      "System.out.println(number); // 10 — unchanged",
+      "",
+      "void modifyPrimitive(int num) {",
+      "    num = 50;",
+      "}"
+    ],
+    steps: [
+      { line: 1, note: "<code>number = 10</code> sits in <code>main</code>.",
+        stack: [frame("main", [prim("int", "number", 10)])], heap: [] },
+      { line: 2, note: "Calling the method pushes a new frame. The argument is <em>copied</em> into <code>num</code> — a separate box that also holds 10.",
+        stack: [frame("main", [prim("int", "number", 10)]), frame("modifyPrimitive", [prim("int", "num", 10)])], heap: [] },
+      { line: 6, note: "<code>num</code> becomes 50 inside the method. <code>number</code> back in <code>main</code> is a different box — completely unaffected.",
+        stack: [frame("main", [prim("int", "number", 10)]), frame("modifyPrimitive", [prim("int", "num", 50)])], heap: [] },
+      { line: 7, note: "The method returns and its frame is popped. <code>num</code> is gone; <code>number</code> was never touched.",
+        stack: [frame("main", [prim("int", "number", 10)])], heap: [] },
+      { line: 3, note: "Prints <code>10</code>. Passing a primitive passes a copy, so the callee can't change the caller's value.",
+        stack: [frame("main", [prim("int", "number", 10)])], heap: [] }
+    ]
+  },
+
+  /* 5 ---------------------------------------------------------- */
+  {
+    id: "pbv-reference",
+    tab: "Pass by value ②",
+    title: "Pass by value — references are copied too",
+    desc: "The reference is passed by value: mutation shows through, reassignment doesn't.",
+    code: [
+      'Dog myDog = new Dog("Max");',
+      "modifyObject(myDog);          // mutation IS visible -> prints Fido",
+      "System.out.println(myDog.name);",
+      "reassignObject(myDog);        // reassignment is NOT visible -> still Fido",
+      "System.out.println(myDog.name);",
+      "",
+      "void modifyObject(Dog d) {",
+      '    d.name = "Fido";',
+      "}",
+      "void reassignObject(Dog d) {",
+      '    d = new Dog("Rex");',
+      "}"
+    ],
+    steps: [
+      { line: 1, note: "A Dog holding <code>\"Max\"</code> lives at <code>@o1</code>. <code>myDog</code> references it.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Max"')])] },
+      { line: 2, note: "The reference is passed by value: <code>d</code> is a <em>copy of the arrow</em>, so it aliases the same <code>@o1</code>.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")]), frame("modifyObject", [sref("Dog", "d", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Max"')])] },
+      { line: 8, note: "<code>d.name = \"Fido\"</code> mutates the shared object. Because both arrows point at <code>@o1</code>, this change IS visible to <code>myDog</code>.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")]), frame("modifyObject", [sref("Dog", "d", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] },
+      { line: 9, note: "The frame pops. The mutation stuck because it happened <em>through</em> the shared reference.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] },
+      { line: 3, note: "Prints <code>Fido</code>. Mutating an object through a passed reference does affect the original.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] },
+      { line: 4, note: "Second call. Again <code>d</code> is a copy of the arrow, aliasing <code>@o1</code>.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")]), frame("reassignObject", [sref("Dog", "d", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] },
+      { line: 11, note: "<code>d = new Dog(\"Rex\")</code> repoints only the <em>local copy</em> to a fresh <code>@o2</code>. <code>myDog</code> still points at the original <code>@o1</code>.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")]), frame("reassignObject", [sref("Dog", "d", "o2")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')]), obj("o2", "Dog", [vfield("name", '"Rex"')])] },
+      { line: 12, note: "The frame pops and <code>d</code> disappears. The <code>\"Rex\"</code> object at <code>@o2</code> now has no incoming reference — it's unreachable garbage.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')]), obj("o2", "Dog", [vfield("name", '"Rex"')])] },
+      { line: 12, gc: 1, note: "The garbage collector reclaims the orphaned <code>\"Rex\"</code> object. <code>myDog</code> and its <code>\"Fido\"</code> survive.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] },
+      { line: 5, note: "Prints <code>Fido</code>. Reassigning a parameter only moves the local copy — the caller's reference is untouched.",
+        stack: [frame("main", [sref("Dog", "myDog", "o1")])],
+        heap: [obj("o1", "Dog", [vfield("name", '"Fido"')])] }
+    ]
+  },
+
+  /* 6 ---------------------------------------------------------- */
+  {
+    id: "call-stack",
+    tab: "Call stack",
+    title: "The call stack grows and shrinks",
+    desc: "Nested calls stack frames; each return pops the top frame back off.",
+    code: [
+      "int total = sumSquares(2, 3);",
+      "",
+      "int sumSquares(int a, int b) {",
+      "    return square(a) + square(b);",
+      "}",
+      "int square(int n) {",
+      "    return n * n;",
+      "}"
+    ],
+    steps: [
+      { line: 1, note: "<code>main</code> calls <code>sumSquares(2, 3)</code>. A new frame is pushed with copies <code>a = 2</code>, <code>b = 3</code>.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)])], heap: [] },
+      { line: 4, note: "Evaluating <code>square(a)</code> pushes a third frame with <code>n = 2</code>. The stack is now three frames deep.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)]), frame("square", [prim("int", "n", 2)])], heap: [] },
+      { line: 7, note: "<code>square(2)</code> computes <code>2 * 2 = 4</code> and is about to return.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)]), frame("square", [prim("int", "n", 2)])], heap: [] },
+      { line: 4, note: "The first <code>square</code> frame pops, handing back 4. We're back in <code>sumSquares</code>, now evaluating <code>square(b)</code>.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)])], heap: [] },
+      { line: 4, note: "<code>square(b)</code> pushes a fresh frame — same method, new invocation — with <code>n = 3</code>.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)]), frame("square", [prim("int", "n", 3)])], heap: [] },
+      { line: 7, note: "<code>square(3)</code> computes <code>3 * 3 = 9</code> and returns.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)]), frame("square", [prim("int", "n", 3)])], heap: [] },
+      { line: 4, note: "The second <code>square</code> frame pops. <code>sumSquares</code> now has both results: <code>4 + 9 = 13</code>.",
+        stack: [frame("main", [prim("int", "total", "…")]), frame("sumSquares", [prim("int", "a", 2), prim("int", "b", 3)])], heap: [] },
+      { line: 1, note: "<code>sumSquares</code> returns 13 and pops. Back in <code>main</code>, <code>total = 13</code>.",
+        stack: [frame("main", [prim("int", "total", 13)])], heap: [] }
+    ]
+  },
+
+  /* 7 ---------------------------------------------------------- */
+  {
+    id: "gc",
+    tab: "Garbage collection",
+    title: "Garbage collection — transitive unreachability",
+    desc: "When A becomes garbage, anything reachable only through A becomes garbage too.",
+    code: [
+      'Node a = new Node("A");',
+      'Node b = new Node("B");',
+      "a.next = b;",
+      'b = new Node("C");',
+      "a = null;",
+      "System.gc();"
+    ],
+    steps: [
+      { line: 1, note: "Node A is allocated at <code>@o1</code>. Its <code>next</code> field is <code>null</code> for now.",
+        stack: [frame("main", [sref("Node", "a", "o1")])],
+        heap: [obj("o1", "Node", [vfield("name", '"A"'), rfield("next", null)])] },
+      { line: 2, note: "Node B is allocated at <code>@o2</code>. Two independent nodes so far, each referenced from the stack.",
+        stack: [frame("main", [sref("Node", "a", "o1"), sref("Node", "b", "o2")])],
+        heap: [obj("o1", "Node", [vfield("name", '"A"'), rfield("next", null)]), obj("o2", "Node", [vfield("name", '"B"'), rfield("next", null)])] },
+      { line: 3, note: "<code>a.next = b</code> stores a reference <em>inside</em> a heap object. A now points to B — a heap-to-heap arrow.",
+        stack: [frame("main", [sref("Node", "a", "o1"), sref("Node", "b", "o2")])],
+        heap: [obj("o1", "Node", [vfield("name", '"A"'), rfield("next", "o2")]), obj("o2", "Node", [vfield("name", '"B"'), rfield("next", null)])] },
+      { line: 4, note: "<code>b</code> is repointed to a new Node C at <code>@o3</code>. B has lost its stack reference — but it's still reachable through <code>A.next</code>.",
+        stack: [frame("main", [sref("Node", "a", "o1"), sref("Node", "b", "o3")])],
+        heap: [obj("o1", "Node", [vfield("name", '"A"'), rfield("next", "o2")]), obj("o2", "Node", [vfield("name", '"B"'), rfield("next", null)]), obj("o3", "Node", [vfield("name", '"C"'), rfield("next", null)])] },
+      { line: 5, note: "<code>a = null</code> drops the last stack reference to A. A is now unreachable — and so is B, whose <em>only</em> path ran through A. B still shows A's incoming arrow, yet both are garbage. That's transitive unreachability.",
+        stack: [frame("main", [sref("Node", "a", null), sref("Node", "b", "o3")])],
+        heap: [obj("o1", "Node", [vfield("name", '"A"'), rfield("next", "o2")]), obj("o2", "Node", [vfield("name", '"B"'), rfield("next", null)]), obj("o3", "Node", [vfield("name", '"C"'), rfield("next", null)])] },
+      { line: 6, gc: 2, note: "The collector sweeps A and B together. C, still referenced by <code>b</code>, survives.",
+        stack: [frame("main", [sref("Node", "a", null), sref("Node", "b", "o3")])],
+        heap: [obj("o3", "Node", [vfield("name", '"C"'), rfield("next", null)])] }
+    ]
+  }
+];
+
+/* ============================================================
+   Reachability — BFS from stack roots, following heap ref-fields.
+   Fully derived from the snapshot; transitive by construction.
+   ============================================================ */
+function computeReachable(stack, heap) {
+  const byId = new Map(heap.map(o => [o.id, o]));
+  const reachable = new Set();
+  const queue = [];
+  for (const fr of stack) {
+    for (const slot of fr.slots) {
+      if ("ref" in slot && slot.ref && byId.has(slot.ref) && !reachable.has(slot.ref)) {
+        reachable.add(slot.ref);
+        queue.push(slot.ref);
+      }
+    }
+  }
+  while (queue.length) {
+    const cur = byId.get(queue.shift());
+    if (!cur) continue;
+    for (const f of cur.fields) {
+      if ("ref" in f && f.ref && byId.has(f.ref) && !reachable.has(f.ref)) {
+        reachable.add(f.ref);
+        queue.push(f.ref);
+      }
+    }
+  }
+  return reachable;
+}
+
+/* ============================================================
+   Java syntax highlighting (lightweight)
+   ============================================================ */
+const KW = new Set(["new", "return", "null", "class", "public", "private", "protected", "static", "final", "if", "else", "for", "while", "void", "this", "import", "package", "true", "false"]);
+const PRIMTYPE = new Set(["int", "double", "boolean", "char", "long", "float", "short", "byte"]);
+
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+function highlight(line) {
+  const re = /("(?:\\.|[^"\\])*")|(\/\/.*$)|(\b\d+(?:\.\d+)?\b)|(\b[A-Za-z_][A-Za-z0-9_]*\b)|(\b[a-z_][A-Za-z0-9_]*(?=\s*\())/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(line))) {
+    out += esc(line.slice(last, m.index));
+    let cls = "";
+    if (m[1]) cls = "c-str";
+    else if (m[2]) cls = "c-com";
+    else if (m[3]) cls = "c-num";
+    else if (m[5]) cls = "c-fn";
+    else if (m[4]) {
+      const w = m[4];
+      if (KW.has(w) || PRIMTYPE.has(w)) cls = "c-kw";
+      else if (/^[A-Z]/.test(w)) cls = "c-type";
+    }
+    out += cls ? `<span class="${cls}">${esc(m[0])}</span>` : esc(m[0]);
+    last = m.index + m[0].length;
+  }
+  out += esc(line.slice(last));
+  return out || "&nbsp;";
+}
+
+/* ============================================================
+   App state + DOM
+   ============================================================ */
+const els = {
+  examples: document.getElementById("examples"),
+  title: document.getElementById("ex-title"),
+  desc: document.getElementById("ex-desc"),
+  code: document.getElementById("code"),
+  noteText: document.getElementById("note-text"),
+  noteBadge: document.getElementById("note-badge"),
+  counter: document.getElementById("counter"),
+  tally: document.getElementById("tally"),
+  memBody: document.getElementById("mem-body"),
+  arrows: document.getElementById("arrows"),
+  stackCol: document.getElementById("stack-col"),
+  heapCol: document.getElementById("heap-col"),
+  btnReset: document.getElementById("btn-reset"),
+  btnBack: document.getElementById("btn-back"),
+  btnStep: document.getElementById("btn-step"),
+  btnPlay: document.getElementById("btn-play")
+};
+
+const PLAY_MS = 1700;
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let exIndex = 0;
+let stepIndex = 0;
+let playTimer = null;
+
+/* ----- Example tabs ----- */
+function buildTabs() {
+  EXAMPLES.forEach((ex, i) => {
+    const b = document.createElement("button");
+    b.className = "ex-tab";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", i === exIndex ? "true" : "false");
+    b.innerHTML = `<span class="n">${i + 1}</span>${ex.tab}`;
+    b.addEventListener("click", () => { stopPlay(); exIndex = i; stepIndex = 0; render(); syncTabs(); });
+    els.examples.appendChild(b);
+  });
+}
+function syncTabs() {
+  [...els.examples.children].forEach((b, i) => b.setAttribute("aria-selected", i === exIndex ? "true" : "false"));
+}
+
+/* ----- diff helpers for "changed" highlight ----- */
+function prevSnapshot() {
+  if (stepIndex === 0) return null;
+  return EXAMPLES[exIndex].steps[stepIndex - 1];
+}
+function slotChanged(prev, frameName, slot) {
+  if (!prev) return false;
+  const pf = prev.stack.find(f => f.name === frameName);
+  if (!pf) return true; // frame is new
+  const ps = pf.slots.find(s => s.name === slot.name);
+  if (!ps) return true; // slot is new
+  if ("ref" in slot) return ps.ref !== slot.ref;
+  return ps.value !== slot.value;
+}
+function fieldChanged(prev, objId, field) {
+  if (!prev) return false;
+  const po = prev.heap.find(o => o.id === objId);
+  if (!po) return true; // object is new
+  const pf = po.fields.find(f => f.name === field.name);
+  if (!pf) return true;
+  if ("ref" in field) return pf.ref !== field.ref;
+  return pf.value !== field.value;
+}
+
+/* ============================================================
+   Render
+   ============================================================ */
+function render() {
+  const ex = EXAMPLES[exIndex];
+  const step = ex.steps[stepIndex];
+  const prev = prevSnapshot();
+  const reachable = computeReachable(step.stack, step.heap);
+
+  /* --- source header --- */
+  els.title.textContent = ex.title;
+  els.desc.textContent = ex.desc;
+
+  /* --- code --- */
+  els.code.innerHTML = ex.code.map((ln, i) => {
+    const active = (i + 1) === step.line ? " active" : "";
+    return `<div class="code-line${active}"><span class="ln">${i + 1}</span><span class="src">${highlight(ln)}</span></div>`;
+  }).join("");
+
+  /* --- note --- */
+  els.noteText.innerHTML = step.note;
+  els.noteBadge.textContent = step.gc ? "gc" : "step";
+  els.noteBadge.style.color = step.gc ? "var(--danger)" : "var(--heap)";
+  els.noteBadge.style.borderColor = step.gc ? "var(--danger)" : "var(--heap-border)";
+  els.noteBadge.style.background = step.gc ? "var(--danger-tint)" : "var(--heap-tint)";
+
+  /* --- counter + controls --- */
+  els.counter.innerHTML = `step <b>${stepIndex + 1}</b> / ${ex.steps.length}`;
+  els.btnBack.disabled = stepIndex === 0;
+  els.btnStep.disabled = stepIndex === ex.steps.length - 1;
+  els.btnReset.disabled = stepIndex === 0;
+
+  /* --- tally --- */
+  const total = step.heap.length;
+  const rc = reachable.size;
+  const gc = total - rc;
+  els.tally.innerHTML = `<span class="ok">${rc} reachable</span> · <span class="${gc ? "bad" : ""}">${gc} garbage</span>`;
+
+  /* --- stack --- */
+  renderStack(step, prev);
+
+  /* --- heap (+ optional gc banner) --- */
+  renderHeap(step, prev, reachable);
+
+  /* --- arrows after layout settles --- */
+  requestAnimationFrame(() => requestAnimationFrame(drawArrows));
+}
+
+function renderStack(step, prev) {
+  els.stackCol.innerHTML = "";
+  if (step.stack.length === 0) {
+    els.stackCol.innerHTML = `<div class="region-empty">empty</div>`;
+    return;
+  }
+  step.stack.forEach((fr, i) => {
+    const isTop = i === step.stack.length - 1;
+    const div = document.createElement("div");
+    div.className = "frame" + (isTop ? "" : " dim");
+    const role = isTop ? "top of stack" : (i === 0 ? "base frame" : "frame");
+
+    let slotsHTML = "";
+    fr.slots.forEach((slot, si) => {
+      const changed = slotChanged(prev, fr.name, slot) ? " changed" : "";
+      if ("ref" in slot) {
+        if (slot.ref) {
+          slotsHTML += `<div class="slot ref${changed}">`
+            + `<span class="stype">${esc(slot.type)}</span>`
+            + `<span class="sname">${esc(slot.name)}</span>`
+            + `<span class="arrow-out">→ <span class="anchor" data-arrow-src data-target="${slot.ref}"></span></span>`
+            + `</div>`;
+        } else {
+          slotsHTML += `<div class="slot ref${changed}">`
+            + `<span class="stype">${esc(slot.type)}</span>`
+            + `<span class="sname">${esc(slot.name)}</span>`
+            + `<span class="snull">= null</span>`
+            + `</div>`;
+        }
+      } else {
+        slotsHTML += `<div class="slot${changed}">`
+          + `<span class="stype">${esc(slot.type)}</span>`
+          + `<span class="sname">${esc(slot.name)}</span>`
+          + `<span class="eq">=</span>`
+          + `<span class="sval">${esc(String(slot.value))}</span>`
+          + `</div>`;
+      }
+    });
+
+    div.innerHTML = `<div class="frame-head"><span class="fname">${esc(fr.name)}()</span><span class="frole">${role}</span></div>`
+      + `<div class="slots">${slotsHTML}</div>`;
+    els.stackCol.appendChild(div);
+  });
+}
+
+function renderHeap(step, prev, reachable) {
+  els.heapCol.innerHTML = "";
+
+  if (step.gc) {
+    const banner = document.createElement("div");
+    banner.className = "gc-banner";
+    banner.innerHTML = `<span>🗑</span> GC reclaimed ${step.gc} object${step.gc === 1 ? "" : "s"}`;
+    els.heapCol.appendChild(banner);
+  }
+
+  if (step.heap.length === 0) {
+    const e = document.createElement("div");
+    e.className = "region-empty";
+    e.textContent = "empty — no objects allocated";
+    els.heapCol.appendChild(e);
+    return;
+  }
+
+  step.heap.forEach(o => {
+    const isGarbage = !reachable.has(o.id);
+    const card = document.createElement("div");
+    card.className = "obj" + (isGarbage ? " garbage" : "");
+
+    let fieldsHTML = "";
+    o.fields.forEach(f => {
+      const changed = fieldChanged(prev, o.id, f) ? " changed" : "";
+      if ("ref" in f) {
+        if (f.ref) {
+          fieldsHTML += `<div class="field reff${changed}">`
+            + `<span class="fkey">${esc(f.name)}</span>`
+            + `<span class="arrow-out">→ <span class="anchor" data-arrow-src data-target="${f.ref}"></span></span>`
+            + `</div>`;
+        } else {
+          fieldsHTML += `<div class="field reff${changed}">`
+            + `<span class="fkey">${esc(f.name)}</span>`
+            + `<span class="fnull">null</span>`
+            + `</div>`;
+        }
+      } else {
+        fieldsHTML += `<div class="field${changed}">`
+          + `<span class="fkey">${esc(f.name)}</span>`
+          + `<span class="fval">${esc(String(f.value))}</span>`
+          + `</div>`;
+      }
+    });
+
+    const badge = isGarbage ? `<span class="badge-gc">unreachable</span>` : `<span class="oaddr">@${o.id}</span>`;
+    card.innerHTML = `<span class="tgt" data-arrow-tgt="${o.id}"></span>`
+      + `<div class="obj-head"><span class="otype">${esc(o.type)}</span>${badge}</div>`
+      + `<div class="fields">${fieldsHTML}</div>`;
+    els.heapCol.appendChild(card);
+  });
+}
+
+/* ============================================================
+   SVG reference arrows
+   ============================================================ */
+function drawArrows() {
+  const svg = els.arrows;
+  const host = els.memBody;
+  const box = host.getBoundingClientRect();
+  svg.setAttribute("viewBox", `0 0 ${box.width} ${box.height}`);
+
+  [...svg.querySelectorAll("path.arrow")].forEach(p => p.remove());
+
+  const sources = host.querySelectorAll("[data-arrow-src]");
+  sources.forEach(src => {
+    const tid = src.getAttribute("data-target");
+    const tgt = host.querySelector(`[data-arrow-tgt="${cssq(tid)}"]`);
+    if (!tgt) return;
+
+    const s = centerOf(src.getBoundingClientRect(), box);
+    const t = centerOf(tgt.getBoundingClientRect(), box);
+    const dx = t.x - s.x, dy = t.y - s.y;
+    const k = Math.max(36, Math.min(130, Math.abs(dx) * 0.45 + Math.abs(dy) * 0.14));
+    const d = `M ${s.x.toFixed(1)} ${s.y.toFixed(1)} C ${(s.x + k).toFixed(1)} ${s.y.toFixed(1)} ${(t.x - k).toFixed(1)} ${t.y.toFixed(1)} ${t.x.toFixed(1)} ${t.y.toFixed(1)}`;
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("class", "arrow");
+    path.setAttribute("d", d);
+    path.setAttribute("marker-end", "url(#arrowhead)");
+    svg.appendChild(path);
+
+    if (!reduceMotion) {
+      const len = path.getTotalLength();
+      path.style.strokeDasharray = len;
+      path.style.strokeDashoffset = len;
+      requestAnimationFrame(() => {
+        path.style.transition = "stroke-dashoffset .55s ease";
+        path.style.strokeDashoffset = "0";
+      });
+    }
+  });
+}
+function centerOf(r, box) { return { x: r.left + r.width / 2 - box.left, y: r.top + r.height / 2 - box.top }; }
+function cssq(s) { return String(s).replace(/["\\]/g, "\\$&"); }
+
+/* ============================================================
+   Navigation
+   ============================================================ */
+function stepNext() {
+  const ex = EXAMPLES[exIndex];
+  if (stepIndex < ex.steps.length - 1) { stepIndex++; render(); return true; }
+  return false;
+}
+function stepBack() { if (stepIndex > 0) { stepIndex--; render(); } }
+function resetSteps() { stepIndex = 0; render(); }
+
+function startPlay() {
+  if (playTimer) return;
+  const ex = EXAMPLES[exIndex];
+  if (stepIndex === ex.steps.length - 1) resetSteps();
+  els.btnPlay.innerHTML = "❚❚ Pause";
+  playTimer = setInterval(() => { if (!stepNext()) stopPlay(); }, PLAY_MS);
+}
+function stopPlay() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  els.btnPlay.innerHTML = "▶ Play";
+}
+function togglePlay() { playTimer ? stopPlay() : startPlay(); }
+
+els.btnStep.addEventListener("click", () => { stopPlay(); stepNext(); });
+els.btnBack.addEventListener("click", () => { stopPlay(); stepBack(); });
+els.btnReset.addEventListener("click", () => { stopPlay(); resetSteps(); });
+els.btnPlay.addEventListener("click", togglePlay);
+
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input, textarea")) return;
+  if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); stepNext(); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); stepBack(); }
+  else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+});
+
+let resizeRAF = null;
+window.addEventListener("resize", () => {
+  if (resizeRAF) cancelAnimationFrame(resizeRAF);
+  resizeRAF = requestAnimationFrame(drawArrows);
+});
+
+/* ============================================================
+   Boot
+   ============================================================ */
+buildTabs();
+render();
+if (document.fonts && document.fonts.ready) {
+  document.fonts.ready.then(() => requestAnimationFrame(drawArrows));
+}
+</script>
+</body>
+</html>
